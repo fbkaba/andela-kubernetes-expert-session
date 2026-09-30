@@ -1,0 +1,97 @@
+services:
+  gateway:
+    build: ./gateway
+    ports: ["8080:8080"]
+    environment:
+      ORDER_URL: http://order-service:8081/order
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
+    depends_on: [order-service, otel-collector]
+    restart: unless-stopped
+
+  order-service:
+    build: ./order-service
+    environment:
+      RECOMMENDATION_URL: http://recommendation-service:8082/recommend
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
+    depends_on: [recommendation-service, otel-collector]
+    restart: unless-stopped
+
+  recommendation-service:
+    build: ./recommendation-service
+    environment:
+      DELAY_SECONDS: "3.0"
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
+    depends_on: [otel-collector]
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.110.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+    ports: ["4317:4317", "4318:4318"]
+    restart: unless-stopped
+
+  jaeger:
+    # Jaeger all-in-one with OTLP enabled; UI on 16686.
+    # We intentionally do NOT publish those two ports on the host because
+    # the OpenTelemetry Collector already owns host ports 4317/4318.
+    image: jaegertracing/all-in-one:1.62.0
+    ports:
+      - "16686:16686"
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    expose:
+      - "4317"
+      - "4318"
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports: ["9090:9090"]
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.2.0
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    volumes:
+      - ./observability/loki-config.yaml:/etc/loki/local-config.yaml:ro
+    ports: ["3100:3100"]
+    restart: unless-stopped
+
+  alloy:
+    image: grafana/alloy:v1.19.2
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./observability/alloy-docker.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy-data:/var/lib/alloy/data
+    ports: ["12345:12345"]
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.2.2
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3000:3000"]
+    depends_on: [prometheus, loki, jaeger]
+    restart: unless-stopped
+
+
+volumes:
+  alloy-data:

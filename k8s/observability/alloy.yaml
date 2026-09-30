@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: alloy}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: andela-demo-alloy}
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "namespaces"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: andela-demo-alloy}
+subjects: [{kind: ServiceAccount, name: alloy, namespace: andela-demo}]
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: andela-demo-alloy}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-config
+data:
+  config.alloy: |
+    discovery.kubernetes "pods" {
+      role = "pod"
+    }
+
+    discovery.relabel "pod_logs" {
+      targets = discovery.kubernetes.pods.targets
+
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        action        = "replace"
+        target_label  = "namespace"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        action        = "replace"
+        target_label  = "pod"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_name"]
+        action        = "replace"
+        target_label  = "container"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app"]
+        action        = "replace"
+        target_label  = "service"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        action        = "keep"
+        regex         = "andela-demo"
+      }
+    }
+
+    loki.source.kubernetes "pod_logs" {
+      targets    = discovery.relabel.pod_logs.output
+      forward_to = [loki.write.local.receiver]
+    }
+
+    loki.write "local" {
+      endpoint {
+        url = "http://loki:3100/loki/api/v1/push"
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: alloy}
+spec:
+  selector: {matchLabels: {app: alloy}}
+  template:
+    metadata: {labels: {app: alloy}}
+    spec:
+      serviceAccountName: alloy
+      containers:
+      - name: alloy
+        image: grafana/alloy:v1.4.2
+        args: ["run", "/etc/alloy/config.alloy", "--server.http.listen-addr=0.0.0.0:12345"]
+        ports: [{containerPort: 12345}]
+        volumeMounts: [{name: config, mountPath: /etc/alloy}]
+      volumes: [{name: config, configMap: {name: alloy-config}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: alloy}
+spec: {selector: {app: alloy}, ports: [{port: 12345, targetPort: 12345}]}

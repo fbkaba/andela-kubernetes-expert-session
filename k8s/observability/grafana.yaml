@@ -1,0 +1,158 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: grafana-datasources}
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+      - name: Loki
+        uid: loki
+        type: loki
+        access: proxy
+        url: http://loki:3100
+      - name: Jaeger
+        uid: jaeger
+        type: jaeger
+        access: proxy
+        url: http://jaeger:16686
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: grafana-dashboard-provider}
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: Andela Demo
+        folder: Andela Demo
+        type: file
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: grafana-dashboard}
+data:
+  andela-observability.json: |
+    {
+      "annotations": {
+        "list": []
+      },
+      "editable": true,
+      "panels": [
+        {
+          "type": "timeseries",
+          "title": "Request rate by service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "expr": "sum by (service) (rate(demo_http_requests_total{path!=\"/health\"}[1m]))",
+              "legendFormat": "{{service}}"
+            }
+          ],
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 0
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "p95 request latency",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum by (le, service) (rate(demo_http_request_duration_seconds_bucket[1m])))",
+              "legendFormat": "{{service}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            }
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 0
+          }
+        },
+        {
+          "type": "logs",
+          "title": "Application logs",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "targets": [
+            {
+              "expr": "{service=~\"gateway|order-service|recommendation-service\"}"
+            }
+          ],
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 8
+          }
+        }
+      ],
+      "schemaVersion": 39,
+      "tags": [
+        "andela",
+        "observability"
+      ],
+      "templating": {
+        "list": []
+      },
+      "time": {
+        "from": "now-15m",
+        "to": "now"
+      },
+      "title": "Andela Full Observability",
+      "uid": "andela-full-observability",
+      "version": 1
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: grafana}
+spec:
+  selector: {matchLabels: {app: grafana}}
+  template:
+    metadata: {labels: {app: grafana}}
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:11.2.2
+        env:
+        - {name: GF_SECURITY_ADMIN_USER, value: admin}
+        - {name: GF_SECURITY_ADMIN_PASSWORD, value: admin}
+        ports: [{containerPort: 3000}]
+        volumeMounts:
+        - {name: datasources, mountPath: /etc/grafana/provisioning/datasources}
+        - {name: providers, mountPath: /etc/grafana/provisioning/dashboards}
+        - {name: dashboards, mountPath: /var/lib/grafana/dashboards}
+      volumes:
+      - {name: datasources, configMap: {name: grafana-datasources}}
+      - {name: providers, configMap: {name: grafana-dashboard-provider}}
+      - {name: dashboards, configMap: {name: grafana-dashboard}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: grafana}
+spec: {selector: {app: grafana}, ports: [{port: 3000, targetPort: 3000}]}

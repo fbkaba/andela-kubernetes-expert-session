@@ -1,0 +1,8 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: andela-demo
+resources:
+  - prometheus.yaml
+  - loki.yaml
+  - alloy.yaml
+  - grafana.yaml

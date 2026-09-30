@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: Andela Demo
+    folder: Andela Demo
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards
